@@ -1,0 +1,4 @@
+# 防止 API Key 等敏感信息入库
+.env
+__pycache__/
+*.pyc

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>云溪花园 3# 楼 · 项目资料助手</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", sans-serif; margin: 0; background: #f4f5f7; display: flex; flex-direction: column; height: 100vh; }
+  header { background: #2c3e50; color: #fff; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 16px; margin: 0; }
+  .client-bar { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  select { padding: 4px 8px; font-size: 13px; }
+  button { padding: 4px 12px; font-size: 13px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+  button.primary { background: #3498db; color: #fff; border-color: #3498db; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #llm-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+  .llm-ok { background: #27ae60; }
+  .llm-no { background: #e67e22; }
+  main { flex: 1; display: flex; flex-direction: column; max-width: 900px; width: 100%; margin: 0 auto; padding: 12px; }
+  #chat { flex: 1; overflow-y: auto; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-bottom: 10px; }
+  .msg { margin-bottom: 14px; }
+  .msg.user .bubble { background: #3498db; color: #fff; }
+  .msg.assistant .bubble { background: #ecf0f1; color: #222; }
+  .bubble { padding: 10px 14px; border-radius: 10px; display: inline-block; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+  .meta { font-size: 11px; color: #888; margin-top: 4px; }
+  .sources { font-size: 11px; color: #7f8c8d; margin-top: 4px; }
+  .sources span { background: #eef2f5; padding: 1px 6px; border-radius: 8px; margin-right: 4px; }
+  .copy-btn { font-size: 11px; padding: 1px 8px; margin-top: 4px; color: #888; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; }
+  .copy-btn:hover { color: #3498db; border-color: #3498db; }
+  .copy-btn.copied { color: #27ae60; border-color: #27ae60; }
+  .input-row { display: flex; gap: 8px; }
+  #message { flex: 1; padding: 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; }
+  .hint { font-size: 11px; color: #999; margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>云溪花园住宅项目 3# 楼 · 项目资料助手</h1>
+  <div class="client-bar">
+    <span>当前身份:</span>
+    <select id="client"></select>
+    <button id="export-btn">导出对话</button>
+    <button id="clear-btn">清空对话</button>
+    <span id="llm-status">检测中...</span>
+  </div>
+</header>
+<main>
+  <div id="chat"></div>
+  <div class="input-row">
+    <input id="message" placeholder="输入问题,例如:3#楼5层顶板哪天浇的混凝土?那什么时候可以拆模?" />
+    <button id="send-btn" class="primary">发送</button>
+  </div>
+  <div class="hint">回答会标注 [来源:文档] 并区分"资料所述"与"【模型推断】";资料不足时如实说明。切换身份会清空对话。</div>
+</main>
+
+<script>
+const chatEl = document.getElementById('chat');
+const msgEl = document.getElementById('message');
+const sendBtn = document.getElementById('send-btn');
+const clientSel = document.getElementById('client');
+const clearBtn = document.getElementById('clear-btn');
+const llmStatus = document.getElementById('llm-status');
+
+function addMsg(role, text, extra) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = text;
+  div.appendChild(b);
+  if (extra) {
+    const m = document.createElement('div');
+    m.className = 'meta';
+    m.textContent = extra;
+    div.appendChild(m);
+  }
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function addSources(sources) {
+  if (!sources || !sources.length) return;
+  addSourcesToMsg(chatEl.lastElementChild, sources);
+}
+
+function addSourcesToMsg(msgDiv, sources) {
+  if (!sources || !sources.length) return;
+  const s = document.createElement('div');
+  s.className = 'sources';
+  s.textContent = '来源: ';
+  sources.forEach(src => {
+    const span = document.createElement('span');
+    span.textContent = src;
+    s.appendChild(span);
+  });
+  msgDiv.appendChild(s);
+}
+
+async function loadClients() {
+  const r = await fetch('/api/clients');
+  const list = await r.json();
+  list.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.key;
+    o.textContent = c.name + ' (' + c.role + ')';
+    clientSel.appendChild(o);
+  });
+}
+
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const s = await r.json();
+    if (s.llm_available) {
+      llmStatus.textContent = 'LLM: ' + s.llm_provider.split('|')[0].trim();
+      llmStatus.className = 'llm-ok';
+      llmStatus.title = s.llm_provider;
+    } else {
+      llmStatus.textContent = 'LLM 未配置(降级为检索直出)';
+      llmStatus.className = 'llm-no';
+    }
+  } catch (e) {
+    llmStatus.textContent = '状态未知';
+    llmStatus.className = 'llm-no';
+  }
+}
+
+async function send() {
+  const text = msgEl.value.trim();
+  if (!text) return;
+  msgEl.value = '';
+  sendBtn.disabled = true;
+  addMsg('user', text);
+
+  // 创建 assistant 气泡,流式追加文本
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  msgDiv.appendChild(bubble);
+  chatEl.appendChild(msgDiv);
+
+  let fullText = '';
+  let finalSources = [];
+  let usedLlm = false;
+
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({client_key: clientSel.value, message: text})
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
+      bubble.textContent = '错误: ' + (err.error || '未知错误');
+      return;
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      // 解析 SSE: data: {...}\n\n
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const lines = block.split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === 'delta') {
+            fullText += evt.text;
+            bubble.textContent = fullText;
+            chatEl.scrollTop = chatEl.scrollHeight;
+          } else if (evt.type === 'meta' && evt.used_llm === false) {
+            usedLlm = false;
+          } else if (evt.type === 'meta' && evt.used_llm === true) {
+            usedLlm = true;
+          } else if (evt.type === 'done') {
+            finalSources = evt.sources || [];
+            if (evt.used_llm === false) usedLlm = false;
+          }
+        }
+      }
+    }
+    if (!usedLlm && fullText) {
+      fullText += ' [检索直出模式]';
+      bubble.textContent = fullText;
+    }
+    addSourcesToMsg(msgDiv, finalSources);
+    addCopyBtn(msgDiv);
+  } catch (e) {
+    bubble.textContent = (fullText || '') + '\n请求失败: ' + e.message;
+  } finally {
+    sendBtn.disabled = false;
+    msgEl.focus();
+  }
+}
+
+function addCopyBtn(msgDiv) {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = '复制';
+  btn.onclick = () => {
+    const text = msgDiv.querySelector('.bubble').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = '已复制';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+    });
+  };
+  msgDiv.appendChild(btn);
+}
+
+function exportConversation() {
+  const msgs = chatEl.querySelectorAll('.msg');
+  if (!msgs.length) return;
+  let md = '# 云溪花园3#楼 项目资料助手对话记录\n\n';
+  md += '> 身份: ' + clientSel.options[clientSel.selectedIndex].text + '\n\n---\n\n';
+  msgs.forEach(m => {
+    const role = m.classList.contains('user') ? '**提问**' : '**回答**';
+    const text = m.querySelector('.bubble').textContent;
+    const srcDiv = m.querySelector('.sources');
+    const srcs = srcDiv ? '\n' + srcDiv.textContent.trim() : '';
+    md += role + ':\n\n' + text + srcs + '\n\n---\n\n';
+  });
+  navigator.clipboard.writeText(md).then(() => {
+    const btn = document.getElementById('export-btn');
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = '导出对话'; }, 1500);
+  });
+}
+
+sendBtn.addEventListener('click', send);
+msgEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+clientSel.addEventListener('change', async () => {
+  await fetch('/api/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({client_key: clientSel.value})});
+  chatEl.innerHTML = '';
+  addMsg('assistant', '已切换身份,对话已清空。请以' + clientSel.options[clientSel.selectedIndex].text + '身份提问。');
+});
+
+clearBtn.addEventListener('click', async () => {
+  await fetch('/api/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({client_key: clientSel.value})});
+  chatEl.innerHTML = '';
+});
+
+document.getElementById('export-btn').addEventListener('click', exportConversation);
+
+loadClients();
+loadStatus();
+</script>
+</body>
+</html>

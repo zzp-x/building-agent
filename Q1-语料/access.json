@@ -1,0 +1,332 @@
+{
+  "clients": {
+    "zongbao_A": {
+      "name": "宏基建设集团有限公司(总包)",
+      "role": "总包",
+      "description": "可查看全部文档"
+    },
+    "fenbao_B": {
+      "name": "恒瑞劳务分包有限公司(主体结构劳务分包)",
+      "role": "分包",
+      "description": "仅可查看与其施工范围相关的文档;合同、报价、甲方付款及其他分包单位的记录不可见"
+    }
+  },
+  "documents": [
+    {
+      "id": "01",
+      "file": "docs/01-项目概况.md",
+      "type": "项目概况",
+      "date": "2026-04-20",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "02",
+      "file": "docs/02-进度计划-v1-20260428.md",
+      "type": "进度计划",
+      "date": "2026-04-28",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "03",
+      "file": "docs/03-进度计划-v2-20260515.md",
+      "type": "进度计划",
+      "date": "2026-05-15",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "04",
+      "file": "docs/04-施工日志-20260510.md",
+      "type": "施工日志",
+      "date": "2026-05-10",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "05",
+      "file": "docs/05-施工日志-20260511.md",
+      "type": "施工日志",
+      "date": "2026-05-11",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "06",
+      "file": "docs/06-施工日志-20260512.md",
+      "type": "施工日志",
+      "date": "2026-05-12",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "07",
+      "file": "docs/07-施工日志-20260513.md",
+      "type": "施工日志",
+      "date": "2026-05-13",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "08",
+      "file": "docs/08-施工日志-20260514.md",
+      "type": "施工日志",
+      "date": "2026-05-14",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "09",
+      "file": "docs/09-施工日志-20260515.md",
+      "type": "施工日志",
+      "date": "2026-05-15",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "10",
+      "file": "docs/10-施工日志-20260516.md",
+      "type": "施工日志",
+      "date": "2026-05-16",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "11",
+      "file": "docs/11-磅单-钢筋进场-20260508.csv",
+      "type": "磅单",
+      "date": "2026-05-08",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "12",
+      "file": "docs/12-材料台账-钢筋-202605.csv",
+      "type": "材料台账",
+      "date": "2026-05-31",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "13",
+      "file": "docs/13-混凝土发货单-20260512.md",
+      "type": "材料进场单",
+      "date": "2026-05-12",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "14",
+      "file": "docs/14-材料进场单-模板木方-20260509.md",
+      "type": "材料进场单",
+      "date": "2026-05-09",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "15",
+      "file": "docs/15-供应商报价单-钢筋-20260505.md",
+      "type": "报价单",
+      "date": "2026-05-05",
+      "visible_to": [
+        "zongbao_A"
+      ]
+    },
+    {
+      "id": "16",
+      "file": "docs/16-安全检查记录-20260509.md",
+      "type": "安全检查记录",
+      "date": "2026-05-09",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "17",
+      "file": "docs/17-安全隐患整改复查-20260511.md",
+      "type": "安全检查记录",
+      "date": "2026-05-11",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "18",
+      "file": "docs/18-安全检查记录-20260516.md",
+      "type": "安全检查记录",
+      "date": "2026-05-16",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "19",
+      "file": "docs/19-钢筋隐蔽工程验收记录-5层-20260511.md",
+      "type": "隐蔽工程验收记录",
+      "date": "2026-05-11",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "20",
+      "file": "docs/20-混凝土浇筑旁站记录-5层顶板-20260513.md",
+      "type": "监理旁站记录",
+      "date": "2026-05-13",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "21",
+      "file": "docs/21-混凝土试块强度报告-5层-7d-20260519.md",
+      "type": "试块强度报告",
+      "date": "2026-05-19",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "22",
+      "file": "docs/22-混凝土试块强度报告-4层-7d-20260510.md",
+      "type": "试块强度报告",
+      "date": "2026-05-10",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "23",
+      "file": "docs/23-钢筋隐蔽工程验收记录-6层-20260518.md",
+      "type": "隐蔽工程验收记录",
+      "date": "2026-05-18",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "24",
+      "file": "docs/24-机电预埋验收记录-5层-20260511.md",
+      "type": "隐蔽工程验收记录",
+      "date": "2026-05-11",
+      "visible_to": [
+        "zongbao_A"
+      ]
+    },
+    {
+      "id": "25",
+      "file": "docs/25-会议纪要-周例会-20260507.md",
+      "type": "会议纪要",
+      "date": "2026-05-07",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "26",
+      "file": "docs/26-会议纪要-周例会-20260514.md",
+      "type": "会议纪要",
+      "date": "2026-05-14",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "27",
+      "file": "docs/27-会议纪要-周例会-20260521.md",
+      "type": "会议纪要",
+      "date": "2026-05-21",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "28",
+      "file": "docs/28-合同摘录-劳务及机电分包.md",
+      "type": "合同摘录",
+      "date": "2026-03-15",
+      "visible_to": [
+        "zongbao_A"
+      ]
+    },
+    {
+      "id": "29",
+      "file": "docs/29-规范摘录-混凝土拆模与养护.txt",
+      "type": "规范摘录",
+      "date": "2026-04-01",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "30",
+      "file": "docs/30-规范摘录-隐蔽工程验收.txt",
+      "type": "规范摘录",
+      "date": "2026-04-01",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "31",
+      "file": "docs/31-规范摘录-临边洞口防护.txt",
+      "type": "规范摘录",
+      "date": "2026-04-01",
+      "visible_to": [
+        "zongbao_A",
+        "fenbao_B"
+      ]
+    },
+    {
+      "id": "32",
+      "file": "docs/32-甲方付款进度-20260520.md",
+      "type": "付款进度",
+      "date": "2026-05-20",
+      "visible_to": [
+        "zongbao_A"
+      ]
+    }
+  ]
+}
