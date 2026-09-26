@@ -214,7 +214,9 @@ System Prompt 由两部分拼接:
 
 ## 分层对话记忆(短期上下文 + 长期摘要)
 
-历史记录由 [conversation.py](app/conversation.py) 独立管理,核心是**按客户隔离的中/长期分层对话记忆**:`Dict[client_key, Conversation]` 维护每个客户身份的记忆,分两层协同工作,并持久化到磁盘。
+> **一句话概括**:短期层保真(逐字理解"它/那"等指代)、长期层保广(摘要保证长对话不失忆);溢出即压缩、压缩失败即回滚(不丢数据)、落盘可恢复,且严格按客户身份隔离。
+
+历史记录由 [conversation.py](app/conversation.py) 独立管理,核心是**按客户隔离的中/长期分层对话记忆**:`ConversationManager` 内部 `Dict[client_key, Conversation]`,总包与分包各一份独立记忆、互不可见;每份记忆分两层协同工作,并持久化到磁盘。
 
 ### 分层结构
 
