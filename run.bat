@@ -8,18 +8,22 @@ echo   Yunxi Garden Bldg 3 - Project Assistant
 echo ========================================
 echo.
 
+REM Prefer the dedicated conda env (ai_agent); fall back to PATH python
+set "PY=D:\anaconda3\envs\ai_agent\python.exe"
+if not exist "%PY%" set "PY=python"
+
 REM 1. Check Python
-python --version
+"%PY%" --version
 if errorlevel 1 (
-    echo [ERROR] Python not found. Please install Python 3.8+ and add to PATH.
+    echo [ERROR] Python not found. Please install Python 3.9+ and add to PATH.
     pause
     exit /b 1
 )
 echo [1/4] Python check: OK
 
 REM 2. Install dependencies
-echo [2/4] Installing dependencies (flask / requests / jieba)...
-pip install -r requirements.txt
+echo [2/4] Installing dependencies (flask / requests / jieba / langgraph)...
+"%PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies.
     pause
@@ -51,6 +55,6 @@ echo   Press Ctrl+C to stop.
 echo ========================================
 echo.
 cd app
-python app.py
+"%PY%" app.py
 
 endlocal

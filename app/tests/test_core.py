@@ -131,6 +131,20 @@ def test_followup_retrieves_removal_spec():
     )
 
 
+def test_greeting_gets_friendly_reply():
+    """寒暄类问题应得到引导式回复,而不是'资料不足',且不产生来源。"""
+    engine = get_engine()
+    r = engine.answer(QAContext(query="您好", client_key="zongbao_A"))
+    assert "资料不足" not in r["answer"], f"寒暄不应回资料不足,实际: {r['answer']}"
+    assert "资料助手" in r["answer"], f"应自我介绍并引导提问,实际: {r['answer'][:100]}"
+    assert r["sources"] == []
+    # 业务问题不得被寒暄规则误伤
+    r2 = engine.answer(
+        QAContext(query="项目的精装修造价是多少?", client_key="zongbao_A")
+    )
+    assert "资料不足" in r2["answer"]
+
+
 if __name__ == "__main__":
     import traceback
 

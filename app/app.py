@@ -57,11 +57,14 @@ def chat():
     history = conv.history_for_llm()
 
     engine = get_engine()
-    result = engine.answer(QAContext(query=message, client_key=client_key, history=history))
+    result = engine.answer(
+        QAContext(query=message, client_key=client_key, history=history, summary=conv.summary)
+    )
 
-    # 记录对话历史(只记录问答文本,不记录内部检索细节)
+    # 记录对话历史(只记录问答文本,不记录内部检索细节);溢出时压缩进长期摘要
     conv.add_user(message)
     conv.add_assistant(result["answer"])
+    mgr.compress_and_save(conv, engine.llm.invoke_text)
 
     return jsonify(result)
 
@@ -91,14 +94,15 @@ def chat_stream():
     def generate():
         full_answer = ""
         for event in engine.answer_stream(
-            QAContext(query=message, client_key=client_key, history=history)
+            QAContext(query=message, client_key=client_key, history=history, summary=conv.summary)
         ):
             if event["type"] == "delta":
                 full_answer += event["text"]
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        # 记录对话历史
+        # 记录对话历史;溢出时压缩进长期摘要并持久化
         conv.add_user(message)
         conv.add_assistant(full_answer)
+        mgr.compress_and_save(conv, engine.llm.invoke_text)
 
     return Response(
         generate(),

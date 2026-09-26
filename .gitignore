@@ -1,4 +1,6 @@
 # 防止 API Key 等敏感信息入库
 .env
+# 对话记忆持久化文件(含客户对话内容,不入库)
+app/memory_store.json
 __pycache__/
 *.pyc

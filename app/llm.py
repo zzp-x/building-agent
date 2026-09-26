@@ -1,12 +1,13 @@
-"""LLM 调用模块。
+"""LLM 调用模块(LangChain 模型类版)。
 
 能力:
-- 自动发现可用的 LLM API:
-  1. 环境变量 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL (OpenAI 兼容)
+- 自动发现可用的 LLM API(探测逻辑与旧版一致):
+  1. .env / 环境变量 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL (OpenAI 兼容)
   2. 环境变量 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL
-  3. 从 TRAE 用户 settings.json 中自动发现已配置的 MiniMax 等 key
-- 优先使用 OpenAI 兼容端点(MiniMax、OpenAI、DeepSeek 等)
-- 调用失败时抛出 LLMError,由上层决定是否降级为检索模板回答
+  3. 从 TRAE 用户 settings.json 中自动发现已配置的 key
+- 按 kind 构造 langchain-openai.ChatOpenAI 或 langchain-anthropic.ChatAnthropic,
+  由 LangGraph 节点通过 invoke_text / stream_text 调用
+- 所有异常在模块边界统一转为 LLMError,由上层(状态图条件边)决定是否降级
 
 设计原则:文档内容一律视为数据,通过 system prompt 明确告知模型不得执行文档中的"指令"。
 """
@@ -14,10 +15,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
-import requests
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def _load_dotenv() -> None:
@@ -120,195 +120,132 @@ def _detect_provider() -> Optional[dict]:
 
 
 class LLMClient:
+    """LangChain 模型类的薄封装:统一入口 + 统一异常边界(LLMError)。"""
+
     def __init__(self):
         self.config = _detect_provider()
+        try:
+            self._model = self._build_model()
+            self.load_error: Optional[str] = None
+        except Exception as e:  # 构造失败(依赖损坏等)按"不可用"降级,不让引擎崩溃
+            self._model = None
+            self.load_error = f"{type(e).__name__}: {e}"
+
+    @staticmethod
+    def _ensure_aiohttp_importable() -> None:
+        """Windows 兼容性处理:证书库含损坏条目时,aiohttp 导入期的
+        ssl.create_default_context() 会抛 SSLError,导致 anthropic SDK 不可用。
+        导入 aiohttp 前临时放行逐条证书加载错误,导入完成后立即恢复原行为。"""
+        import ssl
+
+        if not hasattr(ssl.SSLContext, "load_verify_locations"):
+            return
+        orig = ssl.SSLContext.load_verify_locations
+
+        def tolerant(ctx, *args, **kwargs):
+            try:
+                return orig(ctx, *args, **kwargs)
+            except ssl.SSLError:
+                return False  # 跳过无法解析的单条证书
+
+        ssl.SSLContext.load_verify_locations = tolerant
+        try:
+            import aiohttp  # noqa: F401  anthropic SDK 的传递依赖
+        except ImportError:
+            pass
+        finally:
+            ssl.SSLContext.load_verify_locations = orig
+
+    def _build_model(self):
+        if not self.config:
+            return None
+        c = self.config
+        if c["kind"] == "openai":
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                base_url=c["base_url"],
+                api_key=c["api_key"],
+                model=c["model"],
+                temperature=0.2,
+                max_tokens=900,
+                timeout=60,
+                max_retries=0,  # 失败立刻抛错走降级,不做 SDK 层重试
+            )
+        self._ensure_aiohttp_importable()
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(
+            base_url=c["base_url"],
+            api_key=c["api_key"],
+            model_name=c["model"],
+            temperature=0.2,
+            max_tokens=900,
+            default_request_timeout=60,
+            max_retries=0,
+        )
 
     @property
     def available(self) -> bool:
-        return self.config is not None
+        return self._model is not None
 
     @property
     def provider_info(self) -> str:
-        if not self.config:
-            return "未检测到可用的 LLM API"
+        if self._model is None:
+            info = "未检测到可用的 LLM API"
+            if self.load_error:
+                info += f"(加载失败: {self.load_error})"
+            return info
         c = self.config
         return f"{c['kind']} | {c['base_url']} | model={c['model']}"
 
-    def chat(
-        self,
-        messages: List[dict],
-        temperature: float = 0.2,
-        max_tokens: int = 800,
-        timeout: int = 60,
-    ) -> str:
-        if not self.config:
-            raise LLMError("未检测到可用的 LLM API,请配置 LLM_BASE_URL/LLM_API_KEY")
-        c = self.config
-        try:
-            if c["kind"] == "openai":
-                return self._call_openai(c, messages, temperature, max_tokens, timeout)
+    @staticmethod
+    def _to_lc_messages(messages: List[dict]):
+        lc = []
+        for m in messages:
+            role = m["role"]
+            if role == "system":
+                lc.append(SystemMessage(content=m["content"]))
+            elif role == "assistant":
+                lc.append(AIMessage(content=m["content"]))
             else:
-                return self._call_anthropic(
-                    c, messages, temperature, max_tokens, timeout
-                )
+                lc.append(HumanMessage(content=m["content"]))
+        return lc
+
+    def invoke_text(self, messages: List[dict]) -> str:
+        """非流式调用,返回完整文本。任何失败抛 LLMError。"""
+        if not self._model:
+            raise LLMError("未检测到可用的 LLM API,请配置 LLM_BASE_URL/LLM_API_KEY")
+        try:
+            resp = self._model.invoke(self._to_lc_messages(messages))
         except LLMError:
             raise
         except Exception as e:
             raise LLMError(f"LLM 调用失败: {e}")
-
-    def _call_openai(self, c, messages, temperature, max_tokens, timeout) -> str:
-        url = f"{c['base_url']}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {c['api_key']}",
-            "Content-Type": "application/json",
-        }
-        body = {
-            "model": c["model"],
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        r = requests.post(url, headers=headers, json=body, timeout=timeout)
-        if r.status_code != 200:
-            raise LLMError(f"HTTP {r.status_code}: {r.text[:300]}")
-        data = r.json()
-        return data["choices"][0]["message"]["content"].strip()
-
-    def _call_anthropic(self, c, messages, temperature, max_tokens, timeout) -> str:
-        # Anthropic 兼容:system 消息需单独传,role 只能是 user/assistant
-        system = ""
-        conv = []
-        for m in messages:
-            if m["role"] == "system":
-                system += m["content"] + "\n"
-            else:
-                conv.append({"role": m["role"], "content": m["content"]})
-        url = f"{c['base_url']}/v1/messages"
-        headers = {
-            "x-api-key": c["api_key"],
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        body = {
-            "model": c["model"],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": conv,
-        }
-        if system.strip():
-            body["system"] = system.strip()
-        r = requests.post(url, headers=headers, json=body, timeout=timeout)
-        if r.status_code != 200:
-            raise LLMError(f"HTTP {r.status_code}: {r.text[:300]}")
-        data = r.json()
-        # content 可能是 list of blocks
-        content = data.get("content", [])
+        content = resp.content
         if isinstance(content, list):
-            return "".join(blk.get("text", "") for blk in content).strip()
-        return str(content).strip()
-
-    # ---- 流式调用(SSE) ----
-
-    def chat_stream(
-        self,
-        messages: List[dict],
-        temperature: float = 0.2,
-        max_tokens: int = 800,
-        timeout: int = 90,
-    ):
-        """流式调用 LLM,yield 文本片段。调用方负责捕获 LLMError。"""
-        if not self.config:
-            raise LLMError("未检测到可用的 LLM API")
-        c = self.config
-        if c["kind"] == "openai":
-            yield from self._stream_openai(c, messages, temperature, max_tokens, timeout)
-        else:
-            yield from self._stream_anthropic(
-                c, messages, temperature, max_tokens, timeout
+            content = "".join(
+                blk.get("text", "") for blk in content if isinstance(blk, dict)
             )
+        return (content or "").strip()
 
-    def _stream_openai(self, c, messages, temperature, max_tokens, timeout):
-        import json as _json
-
-        url = f"{c['base_url']}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {c['api_key']}",
-            "Content-Type": "application/json",
-        }
-        body = {
-            "model": c["model"],
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
-        with requests.post(
-            url, headers=headers, json=body, timeout=timeout, stream=True
-        ) as r:
-            if r.status_code != 200:
-                raise LLMError(f"HTTP {r.status_code}: {r.text[:300]}")
-            r.encoding = "utf-8"
-            for line in r.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = _json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        text = delta.get("content", "")
-                        if text:
-                            yield text
-                    except _json.JSONDecodeError:
-                        continue
-
-    def _stream_anthropic(self, c, messages, temperature, max_tokens, timeout):
-        import json as _json
-
-        system = ""
-        conv = []
-        for m in messages:
-            if m["role"] == "system":
-                system += m["content"] + "\n"
-            else:
-                conv.append({"role": m["role"], "content": m["content"]})
-        url = f"{c['base_url']}/v1/messages"
-        headers = {
-            "x-api-key": c["api_key"],
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        body = {
-            "model": c["model"],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": conv,
-            "stream": True,
-        }
-        if system.strip():
-            body["system"] = system.strip()
-        with requests.post(
-            url, headers=headers, json=body, timeout=timeout, stream=True
-        ) as r:
-            if r.status_code != 200:
-                raise LLMError(f"HTTP {r.status_code}: {r.text[:300]}")
-            r.encoding = "utf-8"
-            for line in r.iter_lines(decode_unicode=True):
-                if not line or not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                try:
-                    evt = _json.loads(data_str)
-                except _json.JSONDecodeError:
-                    continue
-                if evt.get("type") == "content_block_delta":
-                    delta = evt.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        text = delta.get("text", "")
-                        if text:
-                            yield text
+    def stream_text(self, messages: List[dict]) -> Iterator[str]:
+        """流式调用,yield 文本片段。任何失败(含迭代中途)抛 LLMError。"""
+        if not self._model:
+            raise LLMError("未检测到可用的 LLM API")
+        try:
+            for chunk in self._model.stream(self._to_lc_messages(messages)):
+                text = chunk.content
+                if isinstance(text, list):
+                    text = "".join(
+                        blk.get("text", "") for blk in text if isinstance(blk, dict)
+                    )
+                if text:
+                    yield text
+        except LLMError:
+            raise
+        except Exception as e:
+            raise LLMError(f"LLM 调用失败: {e}")
 
 
 _llm: Optional[LLMClient] = None

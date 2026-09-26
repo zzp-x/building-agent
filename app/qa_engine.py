@@ -1,4 +1,4 @@
-"""QA 引擎:基于检索结果调用 LLM 作答,落实硬要求。
+"""QA 引擎 facade:对外暴露 QAContext / QAEngine,内部编排由 qa_graph 的 LangGraph 状态图完成。
 
 硬要求落实:
 1. 有据可查:每个结论标注来源文档(id+标题);区分"资料所述"与"模型推断";
@@ -11,10 +11,9 @@
 """
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from doc_loader import DocumentStore, get_store
 from llm import LLMError, get_llm
@@ -44,6 +43,7 @@ class QAContext:
     query: str
     client_key: str
     history: List[dict] = field(default_factory=list)
+    summary: str = ""  # 长期层:更早轮次的对话摘要(可为空)
 
 
 def _build_context_block(chunks: List[Chunk], store: DocumentStore) -> str:
@@ -67,6 +67,53 @@ def _build_context_block(chunks: List[Chunk], store: DocumentStore) -> str:
     return "\n".join(lines)
 
 
+def retrieve_chunks(
+    store: DocumentStore,
+    retriever,
+    ctx: QAContext,
+    query_text: Optional[str] = None,
+) -> List[Chunk]:
+    """统一检索逻辑:复合问题按子句拆分 + 追问扩展 + 权限二次校验。
+
+    query_text:实际用于检索的问题;默认用 ctx.query。自我修正环改写后传入改写结果。
+    """
+    query = query_text or ctx.query
+
+    # 追问扩展:上一轮用户问题
+    last_user = ""
+    for h in reversed(ctx.history):
+        if h["role"] == "user":
+            last_user = h["content"]
+            break
+
+    # 把查询按问号/句号拆成子句,分别检索后合并
+    # 解决"浇筑?什么时候可以拆模?"这类复合问题中次要子句被稀释的问题
+    sub_queries = [q.strip() for q in re.split(r"[?？。\n]+", query) if q.strip()]
+    if not sub_queries:
+        sub_queries = [query]
+
+    seen = set()
+    chunks: List[Chunk] = []
+    # 每个子句检索
+    for sq in sub_queries:
+        for c in retriever.search(sq, ctx.client_key, top_k=5):
+            if c.doc_id not in seen:
+                seen.add(c.doc_id)
+                chunks.append(c)
+    # 追问扩展检索
+    if last_user:
+        expanded = last_user + " " + query
+        for c in retriever.search(expanded, ctx.client_key, top_k=5):
+            if c.doc_id not in seen:
+                seen.add(c.doc_id)
+                chunks.append(c)
+
+    # 权限二次校验
+    visible_ids = {d.id for d in store.visible_documents(ctx.client_key)}
+    chunks = [c for c in chunks if c.doc_id in visible_ids]
+    return chunks[:8]
+
+
 def _score_sentence(sent: str, query_tokens: List[str]) -> float:
     toks = set(_tokenize(sent))
     if not toks:
@@ -83,8 +130,6 @@ def _fallback_answer(query: str, chunks: List[Chunk], store: DocumentStore) -> d
     不做推断(推断需 LLM),但能给出"资料所述"的事实,并标注来源。
     若问题明显需要推断(如"能否拆模"),明确说明需要 LLM。
     """
-    import re
-
     if not chunks:
         return {
             "answer": "资料不足:现有资料中未检索到与该问题相关的内容。",
@@ -195,94 +240,53 @@ def _post_process(answer: str, chunks: List[Chunk], store: DocumentStore) -> dic
     }
 
 
+def _chunk_text_to_str(content) -> str:
+    """把 AIMessageChunk.content 归一化为 str(兼容 content blocks 形式)。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            blk.get("text", "") for blk in content if isinstance(blk, dict)
+        )
+    return ""
+
+
 class QAEngine:
+    """facade:保持原有公共接口(answer / answer_stream),内部走 LangGraph 状态图。"""
+
     def __init__(self):
         self.store = get_store()
         self.retriever = get_retriever()
         self.llm = get_llm()
+        # 延迟 import:qa_graph 顶层 import 本模块的提示词与工具函数,避免循环依赖
+        from qa_graph import build_graph
 
-    def _retrieve_chunks(self, ctx: QAContext) -> List[Chunk]:
-        """统一检索逻辑:复合问题按子句拆分 + 追问扩展 + 权限二次校验。"""
-        # 追问扩展:上一轮用户问题
-        last_user = ""
-        for h in reversed(ctx.history):
-            if h["role"] == "user":
-                last_user = h["content"]
-                break
+        self._graph = build_graph(self.store, self.retriever, self.llm)
 
-        # 把查询按问号/句号拆成子句,分别检索后合并
-        # 解决"浇筑?什么时候可以拆模?"这类复合问题中次要子句被稀释的问题
-        sub_queries = [q.strip() for q in re.split(r"[?？。\n]+", ctx.query) if q.strip()]
-        if not sub_queries:
-            sub_queries = [ctx.query]
-
-        seen = set()
-        chunks: List[Chunk] = []
-        # 每个子句检索
-        for sq in sub_queries:
-            for c in self.retriever.search(sq, ctx.client_key, top_k=5):
-                if c.doc_id not in seen:
-                    seen.add(c.doc_id)
-                    chunks.append(c)
-        # 追问扩展检索
-        if last_user:
-            expanded = last_user + " " + ctx.query
-            for c in self.retriever.search(expanded, ctx.client_key, top_k=5):
-                if c.doc_id not in seen:
-                    seen.add(c.doc_id)
-                    chunks.append(c)
-
-        # 权限二次校验
-        visible_ids = {d.id for d in self.store.visible_documents(ctx.client_key)}
-        chunks = [c for c in chunks if c.doc_id in visible_ids]
-        return chunks[:8]
+    def _make_state(self, ctx: QAContext) -> dict:
+        return {
+            "query": ctx.query,
+            "effective_query": ctx.query,
+            "client_key": ctx.client_key,
+            "history": list(ctx.history or []),
+            "summary": ctx.summary or "",
+            "chunks": [],
+            "rewrite_used": 0,
+        }
 
     def answer(self, ctx: QAContext) -> dict:
-        # 1. 权限过滤 + 检索
-        chunks = self._retrieve_chunks(ctx)
-
-        # 2. 无相关资料 -> 资料不足
-        if not chunks:
-            return {
-                "answer": "资料不足:现有资料中未检索到与该问题相关的内容。",
-                "sources": [],
-                "used_llm": False,
-                "inferences": [],
-            }
-
-        # 3. 构建 prompt
-        context_block = _build_context_block(chunks, self.store)
-        client = self.store.get_client(ctx.client_key)
-        client_note = f"当前提问客户:{client.name if client else ctx.client_key}。你只能使用该客户可见的资料,绝不能提及或暗示存在其他不可见文档。"
-
-        messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + client_note}]
-        # 历史对话(只保留 user/assistant,截断避免过长)
-        for h in ctx.history[-8:]:
-            messages.append({"role": h["role"], "content": h["content"]})
-        user_msg = f"{context_block}\n\n【用户问题】{ctx.query}"
-        messages.append({"role": "user", "content": user_msg})
-
-        # 4. 调用 LLM
-        try:
-            raw = self.llm.chat(messages, temperature=0.2, max_tokens=900)
-        except LLMError:
-            return _fallback_answer(ctx.query, chunks, self.store)
-
-        # 5. 后处理:提取来源、推断
-        result = _post_process(raw, chunks, self.store)
-        # 若 LLM 完全没标注来源且回答了具体事实,提醒补标(轻度纠错,不强制)
-        if not result["sources"] and "资料不足" not in result["answer"]:
-            # 尝试从回答中匹配文档 id
-            ids = re.findall(r"\b(\d{2})-", raw)
-            if ids:
-                for did in set(ids):
-                    doc = self.store.get_document(did)
-                    if doc and did in visible_ids:
-                        result["sources"].append(doc.display_name())
-        return result
+        final = self._graph.invoke(
+            self._make_state(ctx), config={"recursion_limit": 12}
+        )
+        return {
+            "answer": final.get("answer", ""),
+            "sources": final.get("sources", []),
+            "used_llm": final.get("used_llm", False),
+            "inferences": final.get("inferences", []),
+        }
 
     def answer_stream(self, ctx: QAContext):
-        """流式回答生成器,yield dict 事件供 SSE 推送。
+        """流式回答生成器,yield dict 事件供 SSE 推送(事件协议与旧版一致)。
 
         事件类型:
         - {"type":"sources","sources":[...]}     检索到的来源文档(先发)
@@ -290,65 +294,67 @@ class QAEngine:
         - {"type":"meta","used_llm":bool}         元信息
         - {"type":"done","sources":[...],"used_llm":bool}  结束
         """
-        # 1. 检索(与 answer() 相同逻辑)
-        chunks = self._retrieve_chunks(ctx)
-        visible_ids = {d.id for d in self.store.visible_documents(ctx.client_key)}
+        sent_sources = False
+        sent_meta = False
+        stream = self._graph.stream(
+            self._make_state(ctx),
+            stream_mode=["messages", "updates"],
+            config={"recursion_limit": 12},
+        )
+        for mode, payload in stream:
+            if mode == "messages":
+                chunk, meta = payload
+                # 只透传 generate 节点的 token(过滤掉 rewrite_query 等其他 LLM 调用)
+                if meta.get("langgraph_node") != "generate":
+                    continue
+                text = _chunk_text_to_str(chunk.content)
+                if not text:
+                    continue
+                if not sent_meta:
+                    sent_meta = True
+                    yield {"type": "meta", "used_llm": True}
+                yield {"type": "delta", "text": text}
+                continue
 
-        if not chunks:
-            yield {"type": "sources", "sources": []}
-            yield {"type": "meta", "used_llm": False}
-            yield {
-                "type": "delta",
-                "text": "资料不足:现有资料中未检索到与该问题相关的内容。",
-            }
-            yield {"type": "done", "sources": [], "used_llm": False}
-            return
-
-        # 先推送来源文档列表
-        src_names = []
-        for ch in chunks:
-            doc = self.store.get_document(ch.doc_id)
-            name = doc.display_name() if doc else f"{ch.doc_id}-{ch.doc_title}"
-            if name not in src_names:
-                src_names.append(name)
-        yield {"type": "sources", "sources": src_names}
-
-        # 构建 prompt
-        context_block = _build_context_block(chunks, self.store)
-        client = self.store.get_client(ctx.client_key)
-        client_note = f"当前提问客户:{client.name if client else ctx.client_key}。你只能使用该客户可见的资料,绝不能提及或暗示存在其他不可见文档。"
-        messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + client_note}]
-        for h in ctx.history[-8:]:
-            messages.append({"role": h["role"], "content": h["content"]})
-        user_msg = f"{context_block}\n\n【用户问题】{ctx.query}"
-        messages.append({"role": "user", "content": user_msg})
-
-        # 尝试 LLM 流式
-        try:
-            yield {"type": "meta", "used_llm": True}
-            full_text = ""
-            for token in self.llm.chat_stream(
-                messages, temperature=0.2, max_tokens=900
-            ):
-                full_text += token
-                yield {"type": "delta", "text": token}
-            # 后处理提取来源
-            result = _post_process(full_text, chunks, self.store)
-            if not result["sources"] and "资料不足" not in full_text:
-                ids = re.findall(r"\b(\d{2})-", full_text)
-                for did in set(ids):
-                    doc = self.store.get_document(did)
-                    if doc and did in visible_ids:
-                        result["sources"].append(doc.display_name())
-            yield {"type": "done", "sources": result["sources"], "used_llm": True}
-        except LLMError:
-            # 降级:逐句 yield
-            yield {"type": "meta", "used_llm": False}
-            fb = _fallback_answer(ctx.query, chunks, self.store)
-            # 逐句推送,模拟流式效果
-            for line in fb["answer"].split("\n"):
-                yield {"type": "delta", "text": line + "\n"}
-            yield {"type": "done", "sources": fb["sources"], "used_llm": False}
+            # mode == "updates": payload 形如 {节点名: {变更键: 值}}
+            node_name, delta = next(iter(payload.items()))
+            if node_name == "retrieve" and not sent_sources:
+                chunks = delta.get("chunks") or []
+                if not chunks:
+                    continue
+                sent_sources = True
+                src_names = []
+                for ch in chunks:
+                    doc = self.store.get_document(ch.doc_id)
+                    name = doc.display_name() if doc else f"{ch.doc_id}-{ch.doc_title}"
+                    if name not in src_names:
+                        src_names.append(name)
+                yield {"type": "sources", "sources": src_names}
+            elif node_name == "postprocess":
+                yield {
+                    "type": "done",
+                    "sources": delta.get("sources", []),
+                    "used_llm": True,
+                }
+            elif node_name == "fallback":
+                yield {"type": "meta", "used_llm": False}
+                for line in delta.get("answer", "").split("\n"):
+                    yield {"type": "delta", "text": line + "\n"}
+                yield {
+                    "type": "done",
+                    "sources": delta.get("sources", []),
+                    "used_llm": False,
+                }
+            elif node_name == "insufficient":
+                yield {"type": "sources", "sources": []}
+                yield {"type": "meta", "used_llm": False}
+                yield {"type": "delta", "text": delta.get("answer", "")}
+                yield {"type": "done", "sources": [], "used_llm": False}
+            elif node_name == "greet":
+                yield {"type": "sources", "sources": []}
+                yield {"type": "meta", "used_llm": False, "greet": True}
+                yield {"type": "delta", "text": delta.get("answer", "")}
+                yield {"type": "done", "sources": [], "used_llm": False, "greet": True}
 
 
 _engine: Optional[QAEngine] = None
